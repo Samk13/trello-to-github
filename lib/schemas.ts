@@ -166,6 +166,8 @@ export const MapFormat = z.object({
 				list: z.string().min(1),
 				// `lists[].status` is only valid if `.project` is set
 				status: z.union([z.int(), z.string().min(1)]).optional(),
+				// Whether to create the status field option if it doesn't exist (only works with status)
+				create: z.boolean().optional().default(false),
 				// the other two are applicable anywhere
 				label: z.union([z.int(), z.string().min(1)]).optional(),
 				milestone: z.union([z.int(), z.string().min(1)]).optional(),

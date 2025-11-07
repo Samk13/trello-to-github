@@ -394,6 +394,7 @@ let usedStatusWithoutProject = false;
 const validStatusFields: Map<string, StatusFieldInfo["options"][number]> =
 	new Map();
 const missingStatusFields = [];
+const statusFieldsToCreate: Array<{ trelloListId: string; name: string }> = [];
 
 for (const trelloLabel of trello.labels) {
 	const mapped = map.labels.find(
@@ -478,9 +479,19 @@ for (const mapping of map.lists) {
 			(field) => field.id === mapping.status || field.name === mapping.status,
 		);
 		if (!projectStatusField) {
-			missingStatusFields.push(mapping.status);
+			if (mapping.create && typeof mapping.status === "string") {
+				// Status doesn't exist but create flag is set - warn user to create it manually
+				statusFieldsToCreate.push({
+					trelloListId: trelloList.id,
+					name: mapping.status,
+				});
+			} else {
+				// Status doesn't exist and no create flag - error
+				missingStatusFields.push(mapping.status);
+			}
 			continue;
 		}
+		// Status field exists - map it regardless of create flag
 		validStatusFields.set(trelloList.id, projectStatusField);
 	}
 }
@@ -583,6 +594,21 @@ if (missingStatusFields.length > 0) {
 	);
 }
 
+if (statusFieldsToCreate.length > 0) {
+	const statusesToCreate = listConjunction.format(
+		statusFieldsToCreate.map((s) => chalk.yellow(s.name)),
+	);
+	p.log.warn(
+		`These status fields need to be created manually (${chalk.dim("create = true")}): ${statusesToCreate}`,
+	);
+	p.log.info(
+		`${chalk.dim("→")} Please create them in your GitHub Project settings at:\n  ${chalk.blue.underline(`https://github.com/${typeof map.repo.owner === "string" ? `users/${map.repo.owner}` : `orgs/${map.repo.owner.login}`}/projects/${projectInfo?.projectId?.split("_").pop()}/settings`)}`,
+	);
+	p.log.info(
+		`${chalk.dim("→")} After creating them, re-run this tool.`,
+	);
+}
+
 if (usedStatusWithoutProject) {
 	p.log.error(
 		`The ${chalk.dim("`map.lists[].status`")} option can only be used if ${chalk.dim("`map.project`")} is set.`,
@@ -610,6 +636,7 @@ if (
 	invalidLists.length > 0 ||
 	missingMilestones.length > 0 ||
 	missingStatusFields.length > 0 ||
+	statusFieldsToCreate.length > 0 ||
 	usedStatusWithoutProject
 ) {
 	fail();
@@ -643,15 +670,29 @@ if (existingLabelsToCreate.length > 0) {
 if (labelsToCreate.length > 0) {
 	const spin = p.spinner({ indicator: "timer" });
 	spin.start(`Creating labels [0/${labelsToCreate.length}]`);
+	let createdCount = 0;
+	let skippedCount = 0;
 	for (const [count, label] of labelsToCreate.entries()) {
-		await octokit.request("POST /repos/{owner}/{repo}/labels", {
-			...baseRequest,
-			name: label.github.name,
-			color: label.github.color?.trim().replace(/^#/, ""),
-		});
+		try {
+			await octokit.request("POST /repos/{owner}/{repo}/labels", {
+				...baseRequest,
+				name: label.github.name,
+				color: label.github.color?.trim().replace(/^#/, ""),
+			});
+			createdCount++;
+		} catch (e) {
+			if (e instanceof RequestError && e.status === 422) {
+				// Label already exists, skip it
+				p.log.warn(`Label ${chalk.yellow(label.github.name)} already exists, skipping...`);
+				skippedCount++;
+			} else {
+				// Re-throw other errors
+				throw e;
+			}
+		}
 		spin.message(`Creating labels [${count + 1}/${labelsToCreate.length}]`);
 	}
-	spin.stop(`Created ${labelsToCreate.length} labels.`);
+	spin.stop(`Created ${createdCount} labels${skippedCount > 0 ? `, skipped ${skippedCount} existing labels` : ""}.`);
 }
 
 function mapMemberId(trelloMemberId: string): string | null {
@@ -785,26 +826,170 @@ async function addIssueToProject(issueNodeId: string) {
 	return (res as any).addProjectV2ItemById.item.id;
 }
 
-async function setIssueStatus(itemId: string, statusId: string) {
+async function setIssueStatus(itemId: string, statusId: string, statusName: string) {
 	invariant(projectInfo, "projectInfo must be set to call `setIssueStatus()`.");
-	await octokit.graphql(`
-		mutation {
-			updateProjectV2ItemFieldValue(
-				input: {projectId: "${projectInfo.projectId}", itemId: "${itemId}", fieldId: "${projectInfo.statusFieldId}", value: {singleSelectOptionId: "${statusId}"}}
-			) {
-				projectV2Item {
-					fieldValueByName(name: "Status") {
-						... on ProjectV2ItemFieldSingleSelectValue {
-							name
+	try {
+		const result = await octokit.graphql(`
+			mutation {
+				updateProjectV2ItemFieldValue(
+					input: {projectId: "${projectInfo.projectId}", itemId: "${itemId}", fieldId: "${projectInfo.statusFieldId}", value: {singleSelectOptionId: "${statusId}"}}
+				) {
+					projectV2Item {
+						id
+						fieldValueByName(name: "Status") {
+							... on ProjectV2ItemFieldSingleSelectValue {
+								name
+							}
+						}
+					}
+				}
+			}`);
+		// biome-ignore lint/suspicious/noExplicitAny: The GraphQL API is not typed
+		const updatedStatus = (result as any).updateProjectV2ItemFieldValue.projectV2Item.fieldValueByName?.name;
+		if (updatedStatus) {
+			p.log.info(`✓ Status set to: ${chalk.green(updatedStatus)}`);
+		}
+	} catch (error) {
+		p.log.error(`Failed to set status to ${chalk.yellow(statusName)}: ${error}`);
+		throw error;
+	}
+}
+
+async function getExistingProjectItems() {
+	invariant(projectInfo, "projectInfo must be set to call `getExistingProjectItems()`.");
+	
+	const queryTarget = map.repo.owner;
+	const ownerType = typeof queryTarget === "string" ? "user" : queryTarget.type;
+	
+	const items: Array<{
+		id: string;
+		issueNumber: number;
+		issueTitle: string;
+		currentStatus: string | null;
+	}> = [];
+	
+	let hasNextPage = true;
+	let cursor: string | null = null;
+	
+	while (hasNextPage) {
+		const query = `
+			query {
+				${ownerType}(login: "${typeof queryTarget === "string" ? queryTarget : queryTarget.login}") {
+					projectV2(number: ${map.project}) {
+						items(first: 100${cursor ? `, after: "${cursor}"` : ""}) {
+							pageInfo {
+								hasNextPage
+								endCursor
+							}
+							nodes {
+								id
+								content {
+									... on Issue {
+										number
+										title
+									}
+								}
+								fieldValueByName(name: "Status") {
+									... on ProjectV2ItemFieldSingleSelectValue {
+										name
+									}
+								}
+							}
 						}
 					}
 				}
 			}
-		}`);
+		`;
+		
+		// biome-ignore lint/suspicious/noExplicitAny: The GraphQL API is not typed
+		const response: any = await octokit.graphql(query);
+		const itemsData = response[ownerType].projectV2.items;
+		
+		for (const item of itemsData.nodes) {
+			if (item.content && item.content.number) {
+				items.push({
+					id: item.id,
+					issueNumber: item.content.number,
+					issueTitle: item.content.title,
+					currentStatus: item.fieldValueByName?.name || null,
+				});
+			}
+		}
+		
+		hasNextPage = itemsData.pageInfo.hasNextPage;
+		cursor = itemsData.pageInfo.endCursor;
+	}
+	
+	return items;
+}
+
+// Check and update statuses for existing issues in the project
+if (projectInfo && validStatusFields.size > 0) {
+	const existingSpin = p.spinner({ indicator: "timer" });
+	existingSpin.start("Checking existing project items...");
+	
+	const existingItems = await getExistingProjectItems();
+	existingSpin.stop(`Found ${chalk.blue(existingItems.length)} existing items in project`);
+	
+	if (existingItems.length > 0) {
+		p.log.info("Checking and updating statuses for existing items...");
+		
+		let updatedCount = 0;
+		let skippedCount = 0;
+		
+		for (const item of existingItems) {
+			// Try to find the corresponding Trello card by matching title
+			const trelloCard = trello.cards.find((card) => {
+				// Simple match by title - you might want to make this more sophisticated
+				return card.name === item.issueTitle;
+			});
+			
+			if (!trelloCard) {
+				// Issue doesn't match any Trello card, skip it
+				skippedCount++;
+				continue;
+			}
+			
+			// Get the expected status for this card based on its Trello list
+			const expectedStatus = validStatusFields.get(trelloCard.idList);
+			
+			if (!expectedStatus) {
+				// No status mapping for this list
+				skippedCount++;
+				continue;
+			}
+			
+			// Check if the current status matches the expected status
+			if (item.currentStatus !== expectedStatus.name) {
+				p.log.info(
+					`Updating issue #${chalk.blue(item.issueNumber)} "${chalk.dim(item.issueTitle.slice(0, 50))}..." from ${chalk.yellow(item.currentStatus || "no status")} to ${chalk.green(expectedStatus.name)}`,
+				);
+				await setIssueStatus(item.id, expectedStatus.id, expectedStatus.name);
+				updatedCount++;
+			} else {
+				skippedCount++;
+			}
+		}
+		
+		p.log.info(
+			`Updated ${chalk.green(updatedCount)} existing items, skipped ${chalk.dim(skippedCount)} items`,
+		);
+	}
 }
 
 const spin = p.spinner({ indicator: "timer" });
 spin.start(`Creating ${chalk.blue(trello.cards.length)} issues`);
+
+// Debug: Show the validStatusFields mapping
+if (projectInfo && validStatusFields.size > 0) {
+	p.log.info("Status field mappings:");
+	for (const [listId, statusOption] of validStatusFields.entries()) {
+		const list = trello.lists.find((l) => l.id === listId);
+		p.log.info(
+			`  ${chalk.cyan(list?.name || listId)} -> ${chalk.green(statusOption.name)}`,
+		);
+	}
+}
 
 for (const [i, card] of trello.cards.entries()) {
 	const issue = await octokit.request("POST /repos/{owner}/{repo}/issues", {
@@ -830,9 +1015,19 @@ for (const [i, card] of trello.cards.entries()) {
 
 	if (projectInfo) {
 		const itemId = await addIssueToProject(issue.data.node_id);
+		const cardList = trello.lists.find((list) => list.id === card.idList);
 		const status = validStatusFields.get(card.idList);
+		
 		if (status) {
-			await setIssueStatus(itemId, status.id);
+			p.log.info(
+				`Setting "${chalk.blue(card.name)}" (from list "${chalk.cyan(cardList?.name)}") to status ${chalk.green(status.name)}`,
+			);
+			await setIssueStatus(itemId, status.id, status.name);
+		} else {
+			// Debug: log when status mapping is not found
+			p.log.warn(
+				`No status mapping found for card "${chalk.yellow(card.name)}" in list "${chalk.yellow(cardList?.name || card.idList)}"`,
+			);
 		}
 	}
 
