@@ -13,16 +13,25 @@ A CLI utility to import a Trello project into GitHub Issues and Projects.
 
 ## Installation
 
-```bash
-npm install -g @piemot/trello-to-github
-# or use via npx
-npx @piemot/trello-to-github ...
-```
+Make sure you have bun installed
+see [installation docs](https://bun.com/docs/installation)
+
+Then, clone this repository and install dependencies:
 
 ## Usage
 
+> Note you must manually add the lists to the GitHub Project before running the import.
+
 ```bash
-trello-to-github [options]
+
+export GH_TOKEN="your_github_token_here"
+# the classic token works for this with repo scope
+
+# dry run
+bun run index.ts --github-token $GH_TOKEN --trello-export trello-data.json --map map.toml --dry-run
+
+# actual run
+bun run index.ts --github-token $GH_TOKEN --trello-export trello-data.json --map map.toml
 ```
 
 ### Options
@@ -69,24 +78,32 @@ trello-to-github \
 The mapping file is a TOML file that lets you specify how Trello users and labels map to GitHub users and labels.
 
 ```toml
-project = 5
+project = 3 # the GitHub Project number to import into
 
 [repo]
 # The GitHub username of the repo owner
-owner = "piemot"
+owner = "Samk13"
 # If the owner is an org, use:
 # owner = { type = "organization", login = "piemot" }
 
 # The name of the repository
-repo = "sample"
+repo = "gh-projects-migration-test"
 
 [[users]]
-trello = "piemot"
-github = "piemot"
+trello = "samaa2"
+github = "Samk13"
+
+# Map Trello lists to GitHub Project statuses
+[[lists]]
+list = "USE CASE/USER STORIES->KRAV 🧩"
+status = "USE CASE/USER STORIES->KRAV 🧩"
+create = true
 
 [[labels]]
-trello = "RFC"
-github = "Request For Comments"
+trello = "digital tjänst"
+github = "digital tjänst"
+create = true
+
 ```
 
 ## How to Get Your Trello Export
