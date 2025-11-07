@@ -1,0 +1,129 @@
+project = 4
+
+[repo]
+# The GitHub username of the repo owner
+owner = "Samk13"
+# If the owner is an org, use:
+# owner = { type = "organization", login = "piemot" }
+
+# The name of the repository
+repo = "gh-projects-migration-test"
+
+[[users]]
+trello = "samaa2"
+github = "Samk13"
+
+# Map Trello lists to GitHub Project statuses
+[[lists]]
+list = "USE CASE/USER STORIES->KRAV 🧩"
+status = "USE CASE/USER STORIES->KRAV 🧩"
+create = true
+
+[[lists]]
+list = "BACKLOG 📕 📗 📘"
+status = "BACKLOG 📕 📗 📘"
+create = true
+
+[[lists]]
+list = "PÅGÅR🛠"
+status = "PÅGÅR🛠"
+create = true
+
+[[lists]]
+list = "KLART"
+status = "KLART"
+create = true
+
+[[lists]]
+list = "KOMPLETTERA KRAV ✍️"
+status = "KOMPLETTERA KRAV ✍️"
+create = true
+
+[[lists]]
+list = "Planerat systemunderhåll"
+status = "Planerat systemunderhåll"
+create = true
+
+
+[[labels]]
+trello = "KTH-prod"
+github = "KTH-prod"
+create = true
+
+[[labels]]
+trello = "digital tjänst"
+github = "digital tjänst"
+create = true
+
+[[labels]]
+trello = "IT-säk / non funct. req"
+github = "IT-säk / non funct. req"
+create = true
+
+[[labels]]
+trello = "User story 3"
+github = "User story 3"
+create = true
+
+[[labels]]
+trello = "User story 5"
+github = "User story 5"
+create = true
+
+[[labels]]
+trello = "user communication /docs"
+github = "user communication /docs"
+create = true
+
+
+[[labels]]
+trello = "KTH data repository"
+github = "KTH data repository"
+create = true
+
+
+[[labels]]
+trello = "UX / UI"
+github = "UX / UI"
+create = true
+
+[[labels]]
+trello = "CERN Ongoing"
+github = "CERN Ongoing"
+create = true
+
+[[labels]]
+trello = "User story 10"
+github = "User story 10"
+create = true
+
+[[labels]]
+trello = "IT-tjänster"
+github = "IT-tjänster"
+create = true
+
+
+[[labels]]
+trello = "samarbete andra aktörer"
+github = "samarbete andra aktörer"
+create = true
+
+[[labels]]
+trello = "SND"
+github = "SND"
+create = true
+
+[[labels]]
+trello = "UI /UX improvement"
+github = "UI /UX improvement"
+create = true
+
+[[labels]]
+trello = "CERN-bug"
+github = "CERN-bug"
+create = true
+
+[[labels]]
+trello = "Devops"
+github = "Devops"
+create = true
